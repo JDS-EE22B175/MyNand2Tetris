@@ -1,0 +1,79 @@
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/5/CPU.hdl
+/**
+ * The Hack Central Processing unit (CPU).
+ * Parses the binary code in the instruction input and executes it according to the
+ * Hack machine language specification. In the case of a C-instruction, computes the
+ * function specified by the instruction. If the instruction specifies to read a memory
+ * value, the inM input is expected to contain this value. If the instruction specifies
+ * to write a value to the memory, sets the outM output to this value, sets the addressM
+ * output to the target address, and asserts the writeM output (when writeM = 0, any
+ * value may appear in outM).
+ * If the reset input is 0, computes the address of the next instruction and sets the
+ * pc output to that value. If the reset input is 1, sets pc to 0.
+ * Note: The outM and writeM outputs are combinational: they are affected by the
+ * instruction's execution during the current cycle. The addressM and pc outputs are
+ * clocked: although they are affected by the instruction's execution, they commit to
+ * their new values only in the next cycle.
+ */
+CHIP CPU {
+
+    IN  inM[16],         // M value input  (M = contents of RAM[A])
+        instruction[16], // Instruction for execution
+        reset;           // Signals whether to re-start the current
+                         // program (reset==1) or continue executing
+                         // the current program (reset==0).
+
+    OUT outM[16],        // M value output
+        writeM,          // Write to M? 
+        addressM[15],    // Address in data memory (of M)
+        pc[15];          // address of next instruction
+
+    PARTS:
+    DMux(in = true, sel = instruction[15], a = instA, b = instC);
+    
+    // If C instr. and d3 bit is 1, the ALU Out is written to M
+    And(a = instC, b = instruction[3], out = writeM, out = writeEn);
+    And16(a = true, b = ALUout, out = outM);
+    // Output Adress is the value in A
+    And16(a = true, b = Aout, out[0..14] = addressM);
+
+    // A Register Logic
+    And(a = instC, b = instruction[5], out = ALUout2A); // If ALU output goes to Reg A
+    Mux16(a = instruction, b = ALUout, sel = ALUout2A, out = ARegIn);
+    Or(a = instA, b = ALUout2A, out = loadA);
+    ARegister(in = ARegIn, load = loadA, out = Aout);
+
+    // D Register Logic
+    And(a = instC, b = instruction[4], out = ALUout2D);
+    DRegister(in = ALUout, load = ALUout2D, out = Dout);
+
+
+    // If the "a" bit in a C instruction is 1 -> It's an M instruction else A.
+    Mux16(a = Aout, b = inM, sel = instruction[12], out = ALUin);
+    
+    ALU(x= Dout, y= ALUin, zx= instruction[11], 
+        nx= instruction[10], zy= instruction[9], 
+        ny= instruction[8], f= instruction[7], no= instruction[6], out= ALUout, zr= zero, ng= negative);
+
+    // PC Logic
+
+    // Self contained way to enable pc increment
+    // If j1,j2,j3 are 0 -> Increment PC
+    // Or8Way(in[0..2] = instruction[0..2], in[3..7] = false, out = notIncrement); 
+    // Not(in = notIncrement, out = Increment);
+
+    Not(in = negative, out = nonNeg); // Not Negative -> Greater Than/Equal to 0
+    Not(in = zero, out = nonZero); // Non Zero
+    Or(a = zero, b = negative, out = LTEQZ); // If Less Than/Equal to 0
+    Not(in = LTEQZ, out = GTZ); // If Greater Than to 0
+    Mux8Way16(a= false, b[0]= GTZ, c[0]= zero, d[0]= nonNeg, e[0]= negative, f[0]= nonZero, g[0]= LTEQZ, h= true, sel= instruction[0..2], out[0]= canJump);
+    // If any condition is satisfied, selected by the Mux, the output will be 1 and PC will Jump to A
+
+    And(a = canJump, b = instC, out = jump);
+    Not(in = jump, out = Increment); // If not jump -> Increment
+    // If jump conditions are satisfied, Jump, else Increment PC. If reset -> PC = 0
+    PC(in = Aout, load = jump, inc = Increment, reset = reset, out[0..14] = pc);   
+}
